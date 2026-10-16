@@ -59,13 +59,10 @@ class HousePricePredictor:
     def predict(self, case_dict):
         X = self._align_features(case_dict)
         
-        # 安全取得預測值並強制轉為標準 python float
+        # 使用 np.atleast_1d 確保無論預測結果是純數值、陣列或串列都能安全轉型
         try:
             raw_pred = self.model.predict(X)
-            if hasattr(raw_pred, "__len__"):
-                pred = float(raw_pred[0])
-            else:
-                pred = float(raw_pred)
+            pred = float(np.atleast_1d(raw_pred)[0])
         except Exception as e:
             print(f"模型預測發生錯誤: {e}")
             pred = 50.0  # 預設保底價格
