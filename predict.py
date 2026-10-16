@@ -46,7 +46,20 @@ class HousePricePredictor:
         if feature.startswith("main_use_"):
             return f"主要用途為「{feature.replace('main_use_', '')}」"
         
-        # 強固的數值防呆轉型，確保絕對不會報錯
+        # 針對特殊布林或二進位特徵獨立處理，避免強轉 int 報錯
+        if feature == "has_parking":
+            try:
+                return "具備車位" if int(float(value)) == 1 else "未附車位"
+            except:
+                return "具備車位" if str(value).lower() in ["1", "true", "yes"] else "未附車位"
+        
+        if feature == "has_elevator":
+            try:
+                return "設有電梯" if int(float(value)) == 1 else "未設電梯"
+            except:
+                return "設有電梯" if str(value).lower() in ["1", "true", "yes"] else "未設電梯"
+
+        # 一般數值型態安全轉型
         try:
             if hasattr(value, "item"):
                 val_float = float(value.item())
@@ -61,10 +74,8 @@ class HousePricePredictor:
             "building_age": f"屋齡約 {int(val_float)} 年",
             "floor": f"位於第 {int(val_float)} 樓",
             "total_floors": f"建物總樓層 {int(val_float)} 樓",
-            "has_parking": "具備車位" if int(val_float) == 1 else "未附車位",
-            "has_elevator": "設有電梯" if int(val_float) == 1 else "未設電梯",
         }
-        return HUMAN_MAP.get(feature, feature)
+        return HUMAN_MAP.get(feature, f"{feature} = {val_float}")
 
     def predict(self, case_dict):
         X = self._align_features(case_dict)
@@ -124,7 +135,6 @@ class HousePricePredictor:
                         val = X.iloc[0][feat]
                         shap_val = float(shap_vals[i])
                         
-                        # 轉換為標準數字
                         try:
                             val_f = float(val.item() if hasattr(val, "item") else val)
                         except:
@@ -132,7 +142,7 @@ class HousePricePredictor:
 
                         if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
                             continue
-                        human_text = self._feature_to_human(feat, val_f)
+                        human_text = self._feature_to_human(feat, val)
                         direction = "推升" if shap_val > 0 else "下修"
                         explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
             except Exception as ex:
@@ -147,7 +157,7 @@ class HousePricePredictor:
                     if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
                         continue
                     if val_f != 0:
-                        human_text = self._feature_to_human(feat, val_f)
+                        human_text = self._feature_to_human(feat, val)
                         explanation_lines.append(f"👉 包含條件：{human_text}")
                 except Exception:
                     pass
