@@ -17,7 +17,8 @@ class HousePricePredictor:
 
         self.model = joblib.load(model_path)
         self.model_features = joblib.load(feature_path)
-        self.explainer = shap.TreeExplainer(self.model)
+        #self.explainer = shap.TreeExplainer(self.model)
+        self.explainer = shap.Explainer(self.model)
 
     def _align_features(self, case_dict):
         df = pd.DataFrame([case_dict])
