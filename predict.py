@@ -18,13 +18,11 @@ class HousePricePredictor:
         self.model = joblib.load(model_path)
         self.model_features = joblib.load(feature_path)
         #self.explainer = shap.TreeExplainer(self.model)
-        
-        print("--- DEBUG 資訊 ---")
-        print("model 的型態 (type):", type(self.model))
-        print("model 的內容 (value):", self.model)
-        print("------------------")
-        print("Model type:", type(self.model))
-        print("Model content:", self.model)
+
+        print("--- [DEBUG] 檢查模型狀態 ---")
+        print("Type of self.model:", type(self.model))
+        print("Value of self.model:", self.model)
+        print("--------------------------")
         self.explainer = shap.Explainer(self.model)
 
     def _align_features(self, case_dict):
