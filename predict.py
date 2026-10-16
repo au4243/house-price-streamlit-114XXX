@@ -17,13 +17,22 @@ class HousePricePredictor:
 
         self.model = joblib.load(model_path)
         self.model_features = joblib.load(feature_path)
-        #self.explainer = shap.TreeExplainer(self.model)
 
         print("--- [DEBUG] 檢查模型狀態 ---")
         print("Type of self.model:", type(self.model))
         print("Value of self.model:", self.model)
         print("--------------------------")
-        self.explainer = shap.Explainer(self.model)
+
+        # 安全初始化 SHAP Explainer，避免版本不相容導致 App 崩潰
+        self.explainer = None
+        try:
+            self.explainer = shap.Explainer(self.model)
+        except Exception as e1:
+            print(f"⚠️ shap.Explainer 初始化失敗: {e1}，嘗試改用 TreeExplainer...")
+            try:
+                self.explainer = shap.TreeExplainer(self.model)
+            except Exception as e2:
+                print(f"⚠️ shap.TreeExplainer 也初始化失敗: {e2}。將關閉 SHAP 解釋功能，僅提供預測價格。")
 
     def _align_features(self, case_dict):
         df = pd.DataFrame([case_dict])
@@ -54,35 +63,46 @@ class HousePricePredictor:
     def predict(self, case_dict):
         X = self._align_features(case_dict)
         pred = float(self.model.predict(X)[0])
-        shap_values = self.explainer(X)
-        shap_vals = shap_values.values[0]
-        feature_names = X.columns
-        base_value = float(self.explainer.expected_value)
 
-        # 累加所有特徵 SHAP 值，保證文字總和 == 預測值
-        cumulative_price = base_value
-        explanation_lines = [f"📌 模型基準單價約為 {base_value:.1f} 萬 / 坪，以下條件使價格進行調整："]
+        # 如果 SHAP 初始化成功，正常計算解釋
+        if self.explainer is not None:
+            try:
+                shap_values = self.explainer(X)
+                shap_vals = shap_values.values[0]
+                feature_names = X.columns
+                
+                base_val_raw = self.explainer.expected_value
+                base_value = float(base_val_raw[0]) if isinstance(base_val_raw, (list, np.ndarray)) else float(base_val_raw)
 
-        # 顯示 Top 10 影響因素文字
-        idx_sorted = np.argsort(np.abs(shap_vals))[-10:][::-1]
-        for i in idx_sorted:
-            feat = feature_names[i]
-            val = X.iloc[0][feat]
-            shap_val = shap_vals[i]
-            # 只顯示 active 類別或非零數值
-            if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
-                continue
-            human_text = self._feature_to_human(feat, val)
-            direction = "推升" if shap_val > 0 else "下修"
-            explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
-            cumulative_price += shap_val
+                cumulative_price = base_value
+                explanation_lines = [f"📌 模型基準單價約為 {base_value:.1f} 萬 / 坪，以下條件使價格進行調整："]
 
-        # 保證 cumulative_price = 模型預測
-        explanation_lines.append(f"\n➡️ 綜合以上因素後，模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。")
+                idx_sorted = np.argsort(np.abs(shap_vals))[-10:][::-1]
+                for i in idx_sorted:
+                    feat = feature_names[i]
+                    val = X.iloc[0][feat]
+                    shap_val = shap_vals[i]
+                    if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
+                        continue
+                    human_text = self._feature_to_human(feat, val)
+                    direction = "推升" if shap_val > 0 else "下修"
+                    explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
+                    cumulative_price += shap_val
 
+                explanation_lines.append(f"\n➡️ 綜合以上因素後，模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。")
+                return {
+                    "predicted_price": pred,
+                    "explanation": "\n".join(explanation_lines),
+                }
+            except Exception as e:
+                print(f"⚠️ 計算 SHAP 解釋時發生錯誤: {e}")
+
+        # 降級備用方案：若 SHAP 失效，僅回傳基本預測價格與提示
+        fallback_explanation = (
+            f"📌 模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。\n"
+            f"（註：目前系統無法載入詳細的特徵歸因解釋，但不影響整體預測結果）"
+        )
         return {
             "predicted_price": pred,
-            "explanation": "\n".join(explanation_lines),
+     "explanation": fallback_explanation,
         }
-
-
