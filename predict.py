@@ -48,7 +48,7 @@ class HousePricePredictor:
         
         try:
             val_float = float(value)
-        except:
+        except Exception:
             val_float = 0.0
 
         HUMAN_MAP = {
@@ -65,7 +65,7 @@ class HousePricePredictor:
     def predict(self, case_dict):
         X = self._align_features(case_dict)
         
-        # 絕對安全的預測值解析方式，完全避免屬性與型態報錯
+        # 絕對安全的預測值解析方式
         pred = 50.0
         try:
             raw_pred = self.model.predict(X)
@@ -137,7 +137,7 @@ class HousePricePredictor:
                     if val != 0:
                         human_text = self._feature_to_human(feat, val)
                         explanation_lines.append(f"👉 包含條件：{human_text}")
-                except:
+                except Exception:
                     pass
 
         explanation_lines.append(f"\n➡️ 綜合以上因素後，模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。")
