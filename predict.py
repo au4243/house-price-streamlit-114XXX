@@ -46,8 +46,12 @@ class HousePricePredictor:
         if feature.startswith("main_use_"):
             return f"主要用途為「{feature.replace('main_use_', '')}」"
         
+        # 強固的數值防呆轉型，確保絕對不會報錯
         try:
-            val_float = float(value)
+            if hasattr(value, "item"):
+                val_float = float(value.item())
+            else:
+                val_float = float(value)
         except Exception:
             val_float = 0.0
 
@@ -117,11 +121,18 @@ class HousePricePredictor:
                 for i in idx_sorted:
                     if i < len(feature_names):
                         feat = feature_names[i]
-                        val = float(X.iloc[0][feat])
+                        val = X.iloc[0][feat]
                         shap_val = float(shap_vals[i])
-                        if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
+                        
+                        # 轉換為標準數字
+                        try:
+                            val_f = float(val.item() if hasattr(val, "item") else val)
+                        except:
+                            val_f = 0.0
+
+                        if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
                             continue
-                        human_text = self._feature_to_human(feat, val)
+                        human_text = self._feature_to_human(feat, val_f)
                         direction = "推升" if shap_val > 0 else "下修"
                         explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
             except Exception as ex:
@@ -131,11 +142,12 @@ class HousePricePredictor:
             explanation_lines.append(f"📌 本案根據您輸入的房屋條件進行綜合評估：")
             for feat in feature_names:
                 try:
-                    val = float(X.iloc[0][feat])
-                    if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
+                    val = X.iloc[0][feat]
+                    val_f = float(val.item() if hasattr(val, "item") else val)
+                    if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
                         continue
-                    if val != 0:
-                        human_text = self._feature_to_human(feat, val)
+                    if val_f != 0:
+                        human_text = self._feature_to_human(feat, val_f)
                         explanation_lines.append(f"👉 包含條件：{human_text}")
                 except Exception:
                     pass
