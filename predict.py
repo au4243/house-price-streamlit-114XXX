@@ -1,164 +1,77 @@
-import os
-import joblib
-import numpy as np
+import pickle
 import pandas as pd
+import numpy as np
+import shap
 
 class HousePricePredictor:
-    def __init__(self):
-        base_dir = os.path.dirname(__file__)
-        model_path = os.path.join(base_dir, "xgb_house_price_model.pkl")
-        feature_path = os.path.join(base_dir, "model_features.pkl")
-
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"❌ 找不到模型檔：{model_path}")
-        if not os.path.exists(feature_path):
-            raise FileNotFoundError(f"❌ 找不到 model_features.pkl，請確認已 push 到 GitHub")
-
-        self.model = joblib.load(model_path)
-        self.model_features = joblib.load(feature_path)
-
-        print("--- [DEBUG] 檢查模型狀態 ---")
-        print("Type of self.model:", type(self.model))
-        print("Value of self.model:", self.model)
-        print("--------------------------")
-        
-        # 安全初始化 shap
-        self.explainer = None
-        try:
-            import shap
-            self.explainer = shap.TreeExplainer(self.model, check_additivity=False)
-        except Exception as e:
-            print(f"初始化 TreeExplainer 失敗（將自動切換為替代說明模式）: {e}")
-
-    def _align_features(self, case_dict):
-        df = pd.DataFrame([case_dict])
-        df = pd.get_dummies(df)
-        for col in self.model_features:
-            if col not in df.columns:
-                df[col] = 0
-        return df[self.model_features]
-
-    def _safe_float(self, val):
-        """絕對安全的型態轉 float 函式，防止任何 .item() 或屬性錯誤"""
-        if val is None:
-            return 0.0
-        try:
-            if hasattr(val, "item") and callable(val.item):
-                return float(val.item())
-            return float(val)
-        except Exception:
-            try:
-                return float(str(val))
-            except Exception:
-                return 0.0
-
-    def _feature_to_human(self, feature, value):
-        if feature.startswith("district_"):
-            return f"位於「{feature.replace('district_', '')}」"
-        if feature.startswith("building_type_"):
-            return f"建物型態為「{feature.replace('building_type_', '')}」"
-        if feature.startswith("main_use_"):
-            return f"主要用途為「{feature.replace('main_use_', '')}」"
-        
-        # 針對特殊布林或二進位特徵獨立處理
-        if feature == "has_parking":
-            val_f = self._safe_float(value)
-            return "具備車位" if int(val_f) == 1 else "未附車位"
-        
-        if feature == "has_elevator":
-            val_f = self._safe_float(value)
-            return "設有電梯" if int(val_f) == 1 else "未設電梯"
-
-        val_float = self._safe_float(value)
-
-        HUMAN_MAP = {
-            "main_area": f"主建物面積約 {val_float:.1f} 坪",
-            "balcony_area": f"陽台面積約 {val_float:.1f} 坪",
-            "building_age": f"屋齡約 {int(val_float)} 年",
-            "floor": f"位於第 {int(val_float)} 樓",
-            "total_floors": f"建物總樓層 {int(val_float)} 樓",
-        }
-        return HUMAN_MAP.get(feature, f"{feature} = {val_float}")
+    def __init__(self, model_path="xgb_house_price_model.pkl", features_path="model_features.pkl"):
+        # 載入 XGBoost 模型與模型訓練時的特徵欄位名稱
+        with open(model_path, "rb") as f:
+            self.model = pickle.load(f)
+            
+        with open(features_path, "rb") as f:
+            self.model_features = pickle.load(f)
+            
+        # 建立 SHAP Explainer
+        self.explainer = shap.TreeExplainer(self.model)
 
     def predict(self, case_dict):
-        X = self._align_features(case_dict)
+        """
+        case_dict 包含：
+        district, building_type, main_use, building_age, 
+        main_area, balcony_area, floor, total_floors, has_parking, has_elevator
+        """
+        # 1. 建立對應的原始特徵 DataFrame
+        # 注意：根據模型特徵，可能包含 building_area_sqm（平方公尺），若是以坪為單位需自行換算或對齊
+        main_area_sqm = case_dict["main_area"] * 3.30578  # 坪轉平方公尺（若訓練特徵包含 building_area_sqm）
+        balcony_area_sqm = case_dict["balcony_area"] * 3.30578
+
+        raw_data = {
+            "building_age": [case_dict["building_age"]],
+            "building_area_sqm": [main_area_sqm + balcony_area_sqm], # 視模型實際訓練欄位而定
+            "floor": [case_dict["floor"]],
+            "total_floors": [case_dict["total_floors"]],
+            "main_area": [case_dict["main_area"]],
+            "balcony_area": [case_dict["balcony_area"]],
+            "has_parking": [case_dict["has_parking"]],
+            "has_elevator": [case_dict["has_elevator"]]
+        }
         
-        # 絕對安全的預測值解析方式
-        pred = 50.0
-        try:
-            raw_pred = self.model.predict(X)
-            pred = self._safe_float(raw_pred[0] if isinstance(raw_pred, (list, np.ndarray)) else raw_pred)
-        except Exception as e:
-            print(f"模型預測發生例外: {e}")
+        df = pd.DataFrame(raw_data)
 
-        feature_names = self.model_features
-        shap_vals = None
-        base_value = float(pred * 0.9)
-
-        # 嘗試使用 SHAP 解釋
-        if self.explainer is not None:
-            try:
-                raw_shap = self.explainer.shap_values(X)
-                if isinstance(raw_shap, list):
-                    shap_vals = np.array(raw_shap[0])
-                elif hasattr(raw_shap, "values"):
-                    shap_vals = np.array(raw_shap.values)
-                    if len(shap_vals.shape) > 1:
-                        shap_vals = shap_vals[0]
-                else:
-                    shap_vals = np.array(raw_shap)
-                    if len(shap_vals.shape) > 1:
-                        shap_vals = shap_vals[0]
-
-                ev = getattr(self.explainer, "expected_value", None)
-                if ev is not None:
-                    if isinstance(ev, (list, np.ndarray)):
-                        base_value = self._safe_float(ev[0]) if len(ev) > 0 else float(pred * 0.9)
-                    else:
-                        base_value = self._safe_float(ev)
-            except Exception as e:
-                print(f"計算 SHAP 值發生例外，改用條件列舉說明: {e}")
-                shap_vals = None
-
-        explanation_lines = []
-
-        # 組合說明文字
-        if shap_vals is not None and len(shap_vals) == len(feature_names):
-            explanation_lines.append(f"📌 模型基準單價約為 {base_value:.1f} 萬 / 坪，以下條件使價格進行調整：")
-            try:
-                idx_sorted = np.argsort(np.abs(shap_vals))[-10:][::-1]
-                for i in idx_sorted:
-                    if i < len(feature_names):
-                        feat = feature_names[i]
-                        val = X.iloc[0][feat]
-                        shap_val = self._safe_float(shap_vals[i])
-                        val_f = self._safe_float(val)
-
-                        if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
-                            continue
-                        human_text = self._feature_to_human(feat, val)
-                        direction = "推升" if shap_val > 0 else "下修"
-                        explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
-            except Exception as ex:
-                print(f"SHAP 排序解析略過: {ex}")
+        # 2. 處理類別型特徵的 One-Hot Encoding (對應 371 個特徵)
+        # 建立全為 0 的 DataFrame，欄位為 model_features
+        input_encoded = pd.DataFrame(0, index=[0], columns=self.model_features)
         
-        if len(explanation_lines) <= 0:
-            explanation_lines.append(f"📌 本案根據您輸入的房屋條件進行綜合評估：")
-            for feat in feature_names:
-                try:
-                    val = X.iloc[0][feat]
-                    val_f = self._safe_float(val)
-                    if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
-                        continue
-                    if val_f != 0:
-                        human_text = self._feature_to_human(feat, val)
-                        explanation_lines.append(f"👉 包含條件：{human_text}")
-                except Exception:
-                    pass
+        # 填入數值特徵
+        for col in df.columns:
+            if col in input_encoded.columns:
+                input_encoded[col] = df[col]
 
-        explanation_lines.append(f"\n➡️ 綜合以上因素後，模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。")
+        # 處理行政區 One-Hot
+        district_col = f"district_{case_dict['district']}"
+        if district_col in input_encoded.columns:
+            input_encoded[district_col] = 1
+
+        # 處理建物型態 One-Hot (注意名稱需與訓練集一致)
+        # 例如：building_type_住宅大樓(...)
+        for col in input_encoded.columns:
+            if case_dict["building_type"] in col:
+                input_encoded[col] = 1
+            if case_dict["main_use"] in col:
+                input_encoded[col] = 1
+
+        # 3. 模型預測
+        pred_price = self.model.predict(input_encoded)[0]
+
+        # 4. 產出 SHAP 解釋說明文字
+        shap_values = self.explainer(input_encoded)
+        
+        # 簡單組合中文解釋說明
+        explanation = f"本案位於 {case_dict['district']}，屋齡 {case_dict['building_age']} 年，主建物面積 {case_dict['main_area']} 坪。"
+        explanation += f"\n經 XGBoost 模型綜合評估周邊行情、樓層（{case_dict['floor']}/{case_dict['total_floors']} 樓）與各項設施後得出此預估價。"
 
         return {
-            "predicted_price": pred,
-            "explanation": "\n".join(explanation_lines),
+            "predicted_price": float(pred_price),
+            "explanation": explanation
         }
