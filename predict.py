@@ -15,15 +15,43 @@ class HousePricePredictor:
         if not os.path.exists(feature_path):
             raise FileNotFoundError(f"❌ 找不到 model_features.pkl，請確認已 push 到 GitHub")
 
-        self.model = joblib.load(model_path)
+        # 載入檔案
+        loaded_data = joblib.load(model_path)
+        
+        print("--- [DEBUG] 檢查載入的原始物件 ---")
+        print("Type of loaded_data:", type(loaded_data))
+        print("---------------------------------")
+
+        # 支援：如果存進去的是字典，自動把模型抽出來
+        if isinstance(loaded_data, dict):
+            print("⚠️ 偵測到模型檔是一個字典，正在尋找模型物件...")
+            # 常見可能存放模型的鍵值
+            possible_keys = ['model', 'regressor', 'xgb', 'estimator', 'best_estimator']
+            found = False
+            for k in possible_keys:
+                if k in loaded_data:
+                    self.model = loaded_data[k]
+                    print(f"✅ 已成功從字典的 key ['{k}'] 中取得模型！")
+                    found = True
+                    break
+            if not found:
+                # 如果找不到指定 key，嘗試抓取字典的第一個值
+                first_val = list(loaded_data.values())[0]
+                if hasattr(first_val, 'predict'):
+                    self.model = first_val
+                    print("✅ 已成功從字典的第一個值中取得模型！")
+                else:
+                    raise TypeError("❌ 無法從載入的字典中識別出含有 predict 方法的模型物件。")
+        else:
+            self.model = loaded_data
+
+        # 最終確認模型是否有 predict 方法
+        if not hasattr(self.model, 'predict'):
+            raise TypeError(f"❌ 載入的物件型態為 {type(self.model)}，它沒有 predict 方法，請確認 xgb_house_price_model.pkl 是否正確！")
+
         self.model_features = joblib.load(feature_path)
 
-        print("--- [DEBUG] 檢查模型狀態 ---")
-        print("Type of self.model:", type(self.model))
-        print("Value of self.model:", self.model)
-        print("--------------------------")
-
-        # 安全初始化 SHAP Explainer，避免版本不相容導致 App 崩潰
+        # 安全初始化 SHAP Explainer
         self.explainer = None
         try:
             self.explainer = shap.Explainer(self.model)
@@ -64,7 +92,6 @@ class HousePricePredictor:
         X = self._align_features(case_dict)
         pred = float(self.model.predict(X)[0])
 
-        # 如果 SHAP 初始化成功，正常計算解釋
         if self.explainer is not None:
             try:
                 shap_values = self.explainer(X)
@@ -97,12 +124,11 @@ class HousePricePredictor:
             except Exception as e:
                 print(f"⚠️ 計算 SHAP 解釋時發生錯誤: {e}")
 
-        # 降級備用方案：若 SHAP 失效，僅回傳基本預測價格與提示
         fallback_explanation = (
             f"📌 模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。\n"
             f"（註：目前系統無法載入詳細的特徵歸因解釋，但不影響整體預測結果）"
         )
         return {
             "predicted_price": pred,
-     "explanation": fallback_explanation,
+            "explanation": fallback_explanation,
         }
