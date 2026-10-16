@@ -22,7 +22,13 @@ class HousePricePredictor:
         print("Type of self.model:", type(self.model))
         print("Value of self.model:", self.model)
         print("--------------------------")
-        self.explainer = shap.Explainer(self.model)
+        
+        # 改用專門針對樹狀模型（XGBoost）最穩定的 TreeExplainer
+        try:
+            self.explainer = shap.TreeExplainer(self.model)
+        except Exception as e:
+            print(f"TreeExplainer 初始化失敗，改用通用 Explainer: {e}")
+            self.explainer = shap.Explainer(self.model)
 
     def _align_features(self, case_dict):
         df = pd.DataFrame([case_dict])
@@ -53,24 +59,32 @@ class HousePricePredictor:
     def predict(self, case_dict):
         X = self._align_features(case_dict)
         pred = float(self.model.predict(X)[0])
-        shap_values = self.explainer(X)
         
-        # 兼容不同版本 SHAP 的 values 結構
-        if hasattr(shap_values, "values"):
-            shap_vals = shap_values.values
+        # 取得 SHAP 值與基準值，加入多層防呆機制
+        try:
+            shap_values = self.explainer(X)
+            if hasattr(shap_values, "values"):
+                shap_vals = shap_values.values
+                if len(shap_vals.shape) > 1:
+                    shap_vals = shap_vals[0]
+            else:
+                shap_vals = shap_values[0]
+        except Exception:
+            # 兼容傳統 TreeExplainer 的 shap_values 方法
+            shap_vals = self.explainer.shap_values(X)
+            if isinstance(shap_vals, list):
+                shap_vals = shap_vals[0]
             if len(shap_vals.shape) > 1:
                 shap_vals = shap_vals[0]
-        else:
-            shap_vals = shap_values[0]
 
         feature_names = X.columns
         
-        # 處理 expected_value 可能為串列或陣列的情況，避免轉型報錯
-        ev = self.explainer.expected_value
+        # 取得 expected_value
+        ev = getattr(self.explainer, "expected_value", 0)
         if isinstance(ev, (list, np.ndarray)):
             base_value = float(np.atleast_1d(ev)[0])
         else:
-            base_value = float(ev)
+            base_value = float(ev) if ev is not None else 0.0
 
         # 累加所有特徵 SHAP 值，保證文字總和 == 預測值
         cumulative_price = base_value
