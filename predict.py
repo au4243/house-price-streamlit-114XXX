@@ -38,6 +38,20 @@ class HousePricePredictor:
                 df[col] = 0
         return df[self.model_features]
 
+    def _safe_float(self, val):
+        """絕對安全的型態轉 float 函式，防止任何 .item() 或屬性錯誤"""
+        if val is None:
+            return 0.0
+        try:
+            if hasattr(val, "item") and callable(val.item):
+                return float(val.item())
+            return float(val)
+        except Exception:
+            try:
+                return float(str(val))
+            except Exception:
+                return 0.0
+
     def _feature_to_human(self, feature, value):
         if feature.startswith("district_"):
             return f"位於「{feature.replace('district_', '')}」"
@@ -46,27 +60,16 @@ class HousePricePredictor:
         if feature.startswith("main_use_"):
             return f"主要用途為「{feature.replace('main_use_', '')}」"
         
-        # 針對特殊布林或二進位特徵獨立處理，避免強轉 int 報錯
+        # 針對特殊布林或二進位特徵獨立處理
         if feature == "has_parking":
-            try:
-                return "具備車位" if int(float(value)) == 1 else "未附車位"
-            except:
-                return "具備車位" if str(value).lower() in ["1", "true", "yes"] else "未附車位"
+            val_f = self._safe_float(value)
+            return "具備車位" if int(val_f) == 1 else "未附車位"
         
         if feature == "has_elevator":
-            try:
-                return "設有電梯" if int(float(value)) == 1 else "未設電梯"
-            except:
-                return "設有電梯" if str(value).lower() in ["1", "true", "yes"] else "未設電梯"
+            val_f = self._safe_float(value)
+            return "設有電梯" if int(val_f) == 1 else "未設電梯"
 
-        # 一般數值型態安全轉型
-        try:
-            if hasattr(value, "item"):
-                val_float = float(value.item())
-            else:
-                val_float = float(value)
-        except Exception:
-            val_float = 0.0
+        val_float = self._safe_float(value)
 
         HUMAN_MAP = {
             "main_area": f"主建物面積約 {val_float:.1f} 坪",
@@ -84,12 +87,7 @@ class HousePricePredictor:
         pred = 50.0
         try:
             raw_pred = self.model.predict(X)
-            if hasattr(raw_pred, "item"):
-                pred = float(raw_pred.item())
-            elif isinstance(raw_pred, (list, np.ndarray)):
-                pred = float(raw_pred[0])
-            else:
-                pred = float(raw_pred)
+            pred = self._safe_float(raw_pred[0] if isinstance(raw_pred, (list, np.ndarray)) else raw_pred)
         except Exception as e:
             print(f"模型預測發生例外: {e}")
 
@@ -115,9 +113,9 @@ class HousePricePredictor:
                 ev = getattr(self.explainer, "expected_value", None)
                 if ev is not None:
                     if isinstance(ev, (list, np.ndarray)):
-                        base_value = float(ev[0]) if len(ev) > 0 else float(pred * 0.9)
+                        base_value = self._safe_float(ev[0]) if len(ev) > 0 else float(pred * 0.9)
                     else:
-                        base_value = float(ev)
+                        base_value = self._safe_float(ev)
             except Exception as e:
                 print(f"計算 SHAP 值發生例外，改用條件列舉說明: {e}")
                 shap_vals = None
@@ -133,12 +131,8 @@ class HousePricePredictor:
                     if i < len(feature_names):
                         feat = feature_names[i]
                         val = X.iloc[0][feat]
-                        shap_val = float(shap_vals[i])
-                        
-                        try:
-                            val_f = float(val.item() if hasattr(val, "item") else val)
-                        except:
-                            val_f = 0.0
+                        shap_val = self._safe_float(shap_vals[i])
+                        val_f = self._safe_float(val)
 
                         if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
                             continue
@@ -153,7 +147,7 @@ class HousePricePredictor:
             for feat in feature_names:
                 try:
                     val = X.iloc[0][feat]
-                    val_f = float(val.item() if hasattr(val, "item") else val)
+                    val_f = self._safe_float(val)
                     if val_f == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
                         continue
                     if val_f != 0:
