@@ -23,7 +23,7 @@ class HousePricePredictor:
         print("Value of self.model:", self.model)
         print("--------------------------")
         
-        # 改用專門針對樹狀模型（XGBoost）最穩定的 TreeExplainer
+        # 初始化 TreeExplainer
         try:
             self.explainer = shap.TreeExplainer(self.model)
         except Exception as e:
@@ -60,22 +60,16 @@ class HousePricePredictor:
         X = self._align_features(case_dict)
         pred = float(self.model.predict(X)[0])
         
-        # 取得 SHAP 值與基準值，加入多層防呆機制
+        # 直接使用最穩定且相容性最高的 shap_values 方法，避免新版介面報錯
         try:
-            shap_values = self.explainer(X)
-            if hasattr(shap_values, "values"):
-                shap_vals = shap_values.values
-                if len(shap_vals.shape) > 1:
-                    shap_vals = shap_vals[0]
-            else:
-                shap_vals = shap_values[0]
-        except Exception:
-            # 兼容傳統 TreeExplainer 的 shap_values 方法
             shap_vals = self.explainer.shap_values(X)
             if isinstance(shap_vals, list):
                 shap_vals = shap_vals[0]
-            if len(shap_vals.shape) > 1:
+            if isinstance(shap_vals, np.ndarray) and len(shap_vals.shape) > 1:
                 shap_vals = shap_vals[0]
+        except Exception as e:
+            print(f"shap_values 計算失敗: {e}")
+            shap_vals = np.zeros(X.shape[1])
 
         feature_names = X.columns
         
