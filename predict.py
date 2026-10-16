@@ -45,29 +45,40 @@ class HousePricePredictor:
             return f"建物型態為「{feature.replace('building_type_', '')}」"
         if feature.startswith("main_use_"):
             return f"主要用途為「{feature.replace('main_use_', '')}」"
+        
+        try:
+            val_float = float(value)
+        except:
+            val_float = 0.0
+
         HUMAN_MAP = {
-            "main_area": f"主建物面積約 {float(value):.1f} 坪",
-            "balcony_area": f"陽台面積約 {float(value):.1f} 坪",
-            "building_age": f"屋齡約 {int(value)} 年",
-            "floor": f"位於第 {int(value)} 樓",
-            "total_floors": f"建物總樓層 {int(value)} 樓",
-            "has_parking": "具備車位" if int(value) == 1 else "未附車位",
-            "has_elevator": "設有電梯" if int(value) == 1 else "未設電梯",
+            "main_area": f"主建物面積約 {val_float:.1f} 坪",
+            "balcony_area": f"陽台面積約 {val_float:.1f} 坪",
+            "building_age": f"屋齡約 {int(val_float)} 年",
+            "floor": f"位於第 {int(val_float)} 樓",
+            "total_floors": f"建物總樓層 {int(val_float)} 樓",
+            "has_parking": "具備車位" if int(val_float) == 1 else "未附車位",
+            "has_elevator": "設有電梯" if int(val_float) == 1 else "未設電梯",
         }
         return HUMAN_MAP.get(feature, feature)
 
     def predict(self, case_dict):
         X = self._align_features(case_dict)
         
-        # 使用 np.atleast_1d 確保無論預測結果是純數值、陣列或串列都能安全轉型
+        # 絕對安全的預測值解析方式，完全避免屬性與型態報錯
+        pred = 50.0
         try:
             raw_pred = self.model.predict(X)
-            pred = float(np.atleast_1d(raw_pred)[0])
+            if hasattr(raw_pred, "item"):
+                pred = float(raw_pred.item())
+            elif isinstance(raw_pred, (list, np.ndarray)):
+                pred = float(raw_pred[0])
+            else:
+                pred = float(raw_pred)
         except Exception as e:
-            print(f"模型預測發生錯誤: {e}")
-            pred = 50.0  # 預設保底價格
+            print(f"模型預測發生例外: {e}")
 
-        feature_names = X.columns
+        feature_names = self.model_features
         shap_vals = None
         base_value = float(pred * 0.9)
 
@@ -89,7 +100,7 @@ class HousePricePredictor:
                 ev = getattr(self.explainer, "expected_value", None)
                 if ev is not None:
                     if isinstance(ev, (list, np.ndarray)):
-                        base_value = float(np.atleast_1d(ev)[0])
+                        base_value = float(ev[0]) if len(ev) > 0 else float(pred * 0.9)
                     else:
                         base_value = float(ev)
             except Exception as e:
@@ -101,25 +112,33 @@ class HousePricePredictor:
         # 組合說明文字
         if shap_vals is not None and len(shap_vals) == len(feature_names):
             explanation_lines.append(f"📌 模型基準單價約為 {base_value:.1f} 萬 / 坪，以下條件使價格進行調整：")
-            idx_sorted = np.argsort(np.abs(shap_vals))[-10:][::-1]
-            for i in idx_sorted:
-                feat = feature_names[i]
-                val = float(X.iloc[0][feat])
-                shap_val = float(shap_vals[i])
-                if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
-                    continue
-                human_text = self._feature_to_human(feat, val)
-                direction = "推升" if shap_val > 0 else "下修"
-                explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
-        else:
+            try:
+                idx_sorted = np.argsort(np.abs(shap_vals))[-10:][::-1]
+                for i in idx_sorted:
+                    if i < len(feature_names):
+                        feat = feature_names[i]
+                        val = float(X.iloc[0][feat])
+                        shap_val = float(shap_vals[i])
+                        if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
+                            continue
+                        human_text = self._feature_to_human(feat, val)
+                        direction = "推升" if shap_val > 0 else "下修"
+                        explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
+            except Exception as ex:
+                print(f"SHAP 排序解析略過: {ex}")
+        
+        if len(explanation_lines) <= 0:
             explanation_lines.append(f"📌 本案根據您輸入的房屋條件進行綜合評估：")
             for feat in feature_names:
-                val = float(X.iloc[0][feat])
-                if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
-                    continue
-                if val != 0:
-                    human_text = self._feature_to_human(feat, val)
-                    explanation_lines.append(f"👉 包含條件：{human_text}")
+                try:
+                    val = float(X.iloc[0][feat])
+                    if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
+                        continue
+                    if val != 0:
+                        human_text = self._feature_to_human(feat, val)
+                        explanation_lines.append(f"👉 包含條件：{human_text}")
+                except:
+                    pass
 
         explanation_lines.append(f"\n➡️ 綜合以上因素後，模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。")
 
