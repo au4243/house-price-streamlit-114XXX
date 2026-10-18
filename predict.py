@@ -1,77 +1,82 @@
-import pickle
-import pandas as pd
-import numpy as np
+import os
+import joblib
 import shap
+import numpy as np
+import pandas as pd
 
 class HousePricePredictor:
-    def __init__(self, model_path="xgb_house_price_model.pkl", features_path="model_features.pkl"):
-        # 載入 XGBoost 模型與模型訓練時的特徵欄位名稱
-        with open(model_path, "rb") as f:
-            self.model = pickle.load(f)
-            
-        with open(features_path, "rb") as f:
-            self.model_features = pickle.load(f)
-            
-        # 建立 SHAP Explainer
+    def __init__(self):
+        base_dir = os.path.dirname(__file__)
+        model_path = os.path.join(base_dir, "lgb_conformal_house_price_model.pkl")
+        feature_path = os.path.join(base_dir, "model_features.pkl")
+
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"❌ 找不到模型檔：{model_path}")
+        if not os.path.exists(feature_path):
+            raise FileNotFoundError(f"❌ 找不到 model_features.pkl，請確認已 push 到 GitHub")
+
+        self.model = joblib.load(model_path)
+        self.model_features = joblib.load(feature_path)
         self.explainer = shap.TreeExplainer(self.model)
 
-    def predict(self, case_dict):
-        """
-        case_dict 包含：
-        district, building_type, main_use, building_age, 
-        main_area, balcony_area, floor, total_floors, has_parking, has_elevator
-        """
-        # 1. 建立對應的原始特徵 DataFrame
-        # 注意：根據模型特徵，可能包含 building_area_sqm（平方公尺），若是以坪為單位需自行換算或對齊
-        main_area_sqm = case_dict["main_area"] * 3.30578  # 坪轉平方公尺（若訓練特徵包含 building_area_sqm）
-        balcony_area_sqm = case_dict["balcony_area"] * 3.30578
+    def _align_features(self, case_dict):
+        df = pd.DataFrame([case_dict])
+        df = pd.get_dummies(df)
+        for col in self.model_features:
+            if col not in df.columns:
+                df[col] = 0
+        return df[self.model_features]
 
-        raw_data = {
-            "building_age": [case_dict["building_age"]],
-            "building_area_sqm": [main_area_sqm + balcony_area_sqm], # 視模型實際訓練欄位而定
-            "floor": [case_dict["floor"]],
-            "total_floors": [case_dict["total_floors"]],
-            "main_area": [case_dict["main_area"]],
-            "balcony_area": [case_dict["balcony_area"]],
-            "has_parking": [case_dict["has_parking"]],
-            "has_elevator": [case_dict["has_elevator"]]
+    def _feature_to_human(self, feature, value):
+        if feature.startswith("district_"):
+            return f"位於「{feature.replace('district_', '')}」"
+        if feature.startswith("building_type_"):
+            return f"建物型態為「{feature.replace('building_type_', '')}」"
+        if feature.startswith("main_use_"):
+            return f"主要用途為「{feature.replace('main_use_', '')}」"
+        HUMAN_MAP = {
+            "main_area": f"主建物面積約 {value:.1f} 坪",
+            "balcony_area": f"陽台面積約 {value:.1f} 坪",
+            "building_age": f"屋齡約 {int(value)} 年",
+            "floor": f"位於第 {int(value)} 樓",
+            "total_floors": f"建物總樓層 {int(value)} 樓",
+            "has_parking": "具備車位" if value == 1 else "未附車位",
+            "has_elevator": "設有電梯" if value == 1 else "未設電梯",
         }
-        
-        df = pd.DataFrame(raw_data)
+        return HUMAN_MAP.get(feature, feature)
 
-        # 2. 處理類別型特徵的 One-Hot Encoding (對應 371 個特徵)
-        # 建立全為 0 的 DataFrame，欄位為 model_features
-        input_encoded = pd.DataFrame(0, index=[0], columns=self.model_features)
-        
-        # 填入數值特徵
-        for col in df.columns:
-            if col in input_encoded.columns:
-                input_encoded[col] = df[col]
+    def predict(self, case_dict):
+        X = self._align_features(case_dict)
+        pred = float(self.model.predict(X)[0])
+        shap_values = self.explainer(X)
+        shap_vals = shap_values.values[0]
+        feature_names = X.columns
+        base_value = float(self.explainer.expected_value)
 
-        # 處理行政區 One-Hot
-        district_col = f"district_{case_dict['district']}"
-        if district_col in input_encoded.columns:
-            input_encoded[district_col] = 1
+        # 累加所有特徵 SHAP 值，保證文字總和 == 預測值
+        cumulative_price = base_value
+        explanation_lines = [f"📌 模型基準單價約為 {base_value:.1f} 萬 / 坪，以下條件使價格進行調整："]
 
-        # 處理建物型態 One-Hot (注意名稱需與訓練集一致)
-        # 例如：building_type_住宅大樓(...)
-        for col in input_encoded.columns:
-            if case_dict["building_type"] in col:
-                input_encoded[col] = 1
-            if case_dict["main_use"] in col:
-                input_encoded[col] = 1
+        # 顯示 Top 10 影響因素文字
+        idx_sorted = np.argsort(np.abs(shap_vals))[-10:][::-1]
+        for i in idx_sorted:
+            feat = feature_names[i]
+            val = X.iloc[0][feat]
+            shap_val = shap_vals[i]
+            # 只顯示 active 類別或非零數值
+            if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
+                continue
+            human_text = self._feature_to_human(feat, val)
+            direction = "推升" if shap_val > 0 else "下修"
+            explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
+            cumulative_price += shap_val
 
-        # 3. 模型預測
-        pred_price = self.model.predict(input_encoded)[0]
-
-        # 4. 產出 SHAP 解釋說明文字
-        shap_values = self.explainer(input_encoded)
-        
-        # 簡單組合中文解釋說明
-        explanation = f"本案位於 {case_dict['district']}，屋齡 {case_dict['building_age']} 年，主建物面積 {case_dict['main_area']} 坪。"
-        explanation += f"\n經 XGBoost 模型綜合評估周邊行情、樓層（{case_dict['floor']}/{case_dict['total_floors']} 樓）與各項設施後得出此預估價。"
+        # 保證 cumulative_price = 模型預測
+        explanation_lines.append(f"\n➡️ 綜合以上因素後，模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。")
 
         return {
-            "predicted_price": float(pred_price),
-            "explanation": explanation
+            "predicted_price": pred,
+            "explanation": "\n".join(explanation_lines),
         }
+
+
