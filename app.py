@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 st.title("🏠 房價估價系統（文字版）｜依據 114 年 不動產成交資料")
-st.caption("XGBoost + 可解釋 AI（SHAP）")
+st.caption("LightGBM + 可解釋 AI（SHAP）")
 
 # =========================
 # 行政區對照表
