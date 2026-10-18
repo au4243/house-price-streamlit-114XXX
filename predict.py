@@ -17,14 +17,36 @@ class HousePricePredictor:
 
         self.model = joblib.load(model_path)
         self.model_features = joblib.load(feature_path)
-        self.explainer = shap.TreeExplainer(self.model)
+
+        # 自動尋找實際的模型物件
+        actual_model = self.model
+        if isinstance(self.model, dict):
+            for key in ["base_model", "model", "regressor", "estimator", "lgb", "predictor"]:
+                if key in self.model and hasattr(self.model[key], "predict"):
+                    actual_model = self.model[key]
+                    break
+            
+            if actual_model is self.model:
+                for k, v in self.model.items():
+                    if hasattr(v, "predict"):
+                        actual_model = v
+                        break
+
+        if hasattr(actual_model, "model"):
+            actual_model = actual_model.model
+
+        self.explainer = shap.TreeExplainer(actual_model)
 
     def _align_features(self, case_dict):
         df = pd.DataFrame([case_dict])
         df = pd.get_dummies(df)
-        for col in self.model_features:
-            if col not in df.columns:
-                df[col] = 0
+        
+        # 修正：使用字典一次性補齊缺少的欄位，避免 Pandas DataFrame 碎片化警告
+        missing_cols = {col: 0 for col in self.model_features if col not in df.columns}
+        if missing_cols:
+            missing_df = pd.DataFrame(missing_cols, index=df.index)
+            df = pd.concat([df, missing_df], axis=1)
+            
         return df[self.model_features]
 
     def _feature_to_human(self, feature, value):
@@ -43,27 +65,33 @@ class HousePricePredictor:
             "has_parking": "具備車位" if value == 1 else "未附車位",
             "has_elevator": "設有電梯" if value == 1 else "未設電梯",
         }
+
         return HUMAN_MAP.get(feature, feature)
 
     def predict(self, case_dict):
         X = self._align_features(case_dict)
-        pred = float(self.model.predict(X)[0])
+        
+        # 支援從字典中取出對應的預測方式
+        if hasattr(self.model, "predict"):
+            pred = float(self.model.predict(X)[0])
+        elif isinstance(self.model, dict) and "base_model" in self.model:
+            pred = float(self.model["base_model"].predict(X)[0])
+        else:
+            pred = float(list(self.model.values())[0].predict(X)[0])
+
         shap_values = self.explainer(X)
         shap_vals = shap_values.values[0]
         feature_names = X.columns
         base_value = float(self.explainer.expected_value)
 
-        # 累加所有特徵 SHAP 值，保證文字總和 == 預測值
         cumulative_price = base_value
         explanation_lines = [f"📌 模型基準單價約為 {base_value:.1f} 萬 / 坪，以下條件使價格進行調整："]
 
-        # 顯示 Top 10 影響因素文字
         idx_sorted = np.argsort(np.abs(shap_vals))[-10:][::-1]
         for i in idx_sorted:
             feat = feature_names[i]
             val = X.iloc[0][feat]
             shap_val = shap_vals[i]
-            # 只顯示 active 類別或非零數值
             if val == 0 and feat.startswith(("district_", "building_type_", "main_use_")):
                 continue
             human_text = self._feature_to_human(feat, val)
@@ -71,12 +99,9 @@ class HousePricePredictor:
             explanation_lines.append(f"👉 {human_text}，使單價約 {direction} {abs(shap_val):.1f} 萬 / 坪")
             cumulative_price += shap_val
 
-        # 保證 cumulative_price = 模型預測
         explanation_lines.append(f"\n➡️ 綜合以上因素後，模型推估本案合理單價約為 {pred:.1f} 萬 / 坪。")
 
         return {
             "predicted_price": pred,
             "explanation": "\n".join(explanation_lines),
         }
-
-
