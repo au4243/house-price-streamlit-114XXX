@@ -91,7 +91,7 @@ CITY_TOWN_MAP = {
         "橫山鄉",
         "關西鎮",
         "寶山鄉",
-    ],    
+    ],
     "苗栗縣": [
         "三義鄉",
         "三灣鄉",
@@ -111,7 +111,7 @@ CITY_TOWN_MAP = {
         "銅鑼鄉",
         "頭份市",
         "頭屋鄉",
-    ],    
+    ],
     "臺中市": [
         "大甲區",
         "大安區",
@@ -142,7 +142,7 @@ CITY_TOWN_MAP = {
         "龍井區",
         "豐原區",
         "霧峰區",
-    ],            
+    ],
     "南投縣": [
         "中寮鄉",
         "仁愛鄉",
@@ -157,7 +157,7 @@ CITY_TOWN_MAP = {
         "魚池鄉",
         "鹿谷鄉",
         "集集鎮",
-    ],                
+    ],
     "彰化縣": [
         "二水鄉",
         "二林鎮",
@@ -185,7 +185,7 @@ CITY_TOWN_MAP = {
         "彰化市",
         "福興鄉",
         "線西鄉",
-    ],           
+    ],
     "雲林縣": [
         "二崙鄉",
         "口湖鄉",
@@ -207,7 +207,7 @@ CITY_TOWN_MAP = {
         "莿桐鄉",
         "臺西鄉",
         "褒忠鄉",
-    ],           
+    ],
     "嘉義縣": [
         "大林鎮",
         "大埔鄉",
@@ -227,7 +227,7 @@ CITY_TOWN_MAP = {
         "新港鄉",
         "溪口鄉",
         "義竹鄉",
-    ],            
+    ],
     "臺南市": [
         "七股區",
         "下營區",
@@ -266,7 +266,7 @@ CITY_TOWN_MAP = {
         "歸仁區",
         "關廟區",
         "鹽水區",
-    ],            
+    ],
     "高雄市": [
         "三民區",
         "大社區",
@@ -306,7 +306,7 @@ CITY_TOWN_MAP = {
         "燕巢區",
         "彌陀區",
         "鹽埕區",
-    ],                
+    ],
     "屏東縣": [
         "九如鄉",
         "三地門鄉",
@@ -341,7 +341,7 @@ CITY_TOWN_MAP = {
         "霧臺鄉",
         "麟洛鄉",
         "鹽埔鄉",
-    ],       
+    ],
     "宜蘭縣": [
         "三星鄉",
         "大同鄉",
@@ -355,7 +355,7 @@ CITY_TOWN_MAP = {
         "礁溪鄉",
         "羅東鎮",
         "蘇澳鎮",
-    ],                    
+    ],
     "花蓮縣": [
         "玉里鎮",
         "光復鄉",
@@ -369,8 +369,8 @@ CITY_TOWN_MAP = {
         "萬榮鄉",
         "壽豐鄉",
         "鳳林鎮",
-        "豐濱鄉",        
-    ],                    
+        "豐濱鄉",
+    ],
     "臺東縣": [
         "大武鄉",
         "太麻里鄉",
@@ -388,7 +388,7 @@ CITY_TOWN_MAP = {
         "臺東市",
         "關山鎮",
         "蘭嶼鄉",
-    ],          
+    ],
     "基隆市": [
         "七堵區",
         "中山區",
@@ -397,16 +397,16 @@ CITY_TOWN_MAP = {
         "安樂區",
         "信義區",
         "暖暖區",
-    ],    
+    ],
     "新竹市": [
         "北區",
         "東區",
-        "香山區",        
-    ],    
+        "香山區",
+    ],
     "嘉義市": [
         "西區",
         "東區",
-    ],  
+    ],
     "澎湖縣": [
         "七美鄉",
         "白沙鄉",
@@ -414,7 +414,7 @@ CITY_TOWN_MAP = {
         "馬公市",
         "望安鄉",
         "湖西鄉",
-    ],    
+    ],
     "金門縣": [
         "金沙鎮",
         "金城鎮",
@@ -429,15 +429,16 @@ CITY_TOWN_MAP = {
         "南竿鄉",
         "莒光鄉",
     ],
-    
 }
+
 
 # =========================
 # 載入模型
 # =========================
 @st.cache_resource
 def load_predictor():
-    return HousePricePredictor()
+  return HousePricePredictor()
+
 
 predictor = load_predictor()
 
@@ -454,10 +455,14 @@ st.sidebar.caption(f"📍 行政區：{district}")
 building_type = st.sidebar.selectbox(
     "建物型態", ["住宅大樓", "華廈", "公寓", "透天厝"]
 )
-main_use = st.sidebar.selectbox(
-    "主要用途", ["住家用", "商業用", "住商用"]
-)
+main_use = st.sidebar.selectbox("主要用途", ["住家用", "商業用", "住商用"])
 building_age = st.sidebar.number_input("屋齡（年）", 0, 80, 20)
+
+# 新增：建物總面積 (平方公尺)
+building_area_sqm = st.sidebar.number_input(
+    "建物總面積（平方公尺）", 10.0, 500.0, 100.0
+)
+
 main_area = st.sidebar.number_input("主建物面積（坪）", 5.0, 100.0, 30.0)
 balcony_area = st.sidebar.number_input("陽台面積（坪）", 0.0, 20.0, 5.0)
 floor = st.sidebar.number_input("所在樓層", 1, 100, 5)
@@ -473,6 +478,7 @@ case_dict = {
     "building_type": building_type,
     "main_use": main_use,
     "building_age": building_age,
+    "building_area_sqm": building_area_sqm,  # 納入傳遞給模型
     "main_area": main_area,
     "balcony_area": balcony_area,
     "floor": floor,
@@ -487,23 +493,23 @@ case_dict = {
 st.subheader("📊 預測結果（文字版）")
 
 if "result" not in st.session_state:
-    st.session_state.result = None
+  st.session_state.result = None
 
 if st.button("🚀 開始估價"):
-    with st.spinner("模型預測中，請稍候..."):
-        st.session_state.result = predictor.predict(case_dict)
+  with st.spinner("模型預測中，請稍候..."):
+    st.session_state.result = predictor.predict(case_dict)
 
 # =========================
 # 顯示文字結果
 # =========================
 if st.session_state.result is not None:
-    result = st.session_state.result
-    st.markdown("## 📝 中文估價說明")
-    st.text(result["explanation"])
+  result = st.session_state.result
+  st.markdown("## 📝 中文估價說明")
+  st.text(result["explanation"])
 
-    st.success(
-        f"💰 模型最終預估單價：約 **{result['predicted_price']:.1f} 萬 / 坪**"
-    )
+  st.success(
+      f"💰 模型最終預估單價：約 **{result['predicted_price']:.1f} 萬 / 坪**"
+  )
 else:
-    st.info("👈 請先填寫左側資料，並點擊「開始估價」")
+  st.info("👈 請先填寫左側資料，並點擊「開始估價」")
 
